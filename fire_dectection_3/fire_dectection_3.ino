@@ -1,0 +1,364 @@
+// speed macros
+#define turnSpeed 130     // 200 recommended
+#define straightSpeed 70  // 125 max speed
+// distance macros
+#define safeTurn 10
+#define detectFlame_L 900
+#define detectFlame_M 1010
+#define detectFlame_R 900
+#define closeToFlame 1018
+// IR Sensor pins
+#define GROUND_L digitalRead(22)
+#define GROUND_R digitalRead(31)
+#define FRONT_L !digitalRead(32)
+#define FRONT_R !digitalRead(33)
+// ultrasonic pins
+#define TRIG_L A8
+#define ECHO_L A9
+#define TRIG_R A10
+#define ECHO_R A11
+// line tracking pins
+#define LT_R !digitalRead(10)
+#define LT_M !digitalRead(4)
+#define LT_L !digitalRead(2)
+// flame detection pins
+#define fire_L analogRead(A12)
+#define fire_M analogRead(A13)
+#define fire_R analogRead(A14)
+// L298n IO pin
+#define ENA 5
+#define ENB 6
+#define IN1 7
+#define IN2 8
+#define IN3 9
+#define IN4 11
+
+//Previous state for line detection
+int prevState;
+int update = millis();
+
+void forward() {
+  analogWrite(ENA, straightSpeed);
+  analogWrite(ENB, straightSpeed);
+  digitalWrite(IN1, HIGH);
+  digitalWrite(IN2, LOW);
+  digitalWrite(IN3, LOW);
+  digitalWrite(IN4, HIGH);
+}
+
+void back(int duration) {
+  analogWrite(ENA, straightSpeed);
+  analogWrite(ENB, straightSpeed);
+  digitalWrite(IN1, LOW);
+  digitalWrite(IN2, HIGH);
+  digitalWrite(IN3, HIGH);
+  digitalWrite(IN4, LOW);
+
+  delay(duration);
+}
+
+void left(int duration) {
+  analogWrite(ENA, turnSpeed);
+  analogWrite(ENB, turnSpeed);
+  digitalWrite(IN1, LOW);
+  digitalWrite(IN2, HIGH);
+  digitalWrite(IN3, LOW);
+  digitalWrite(IN4, HIGH);
+
+  delay(duration);
+}
+
+void right(int duration) {
+  analogWrite(ENA, turnSpeed);
+  analogWrite(ENB, turnSpeed);
+  digitalWrite(IN1, HIGH);
+  digitalWrite(IN2, LOW);
+  digitalWrite(IN3, HIGH);
+  digitalWrite(IN4, LOW);
+
+  delay(duration);
+}
+
+void stop(int duration) {
+  digitalWrite(ENA, LOW);
+  digitalWrite(ENB, LOW);
+
+  delay(duration);
+}
+
+int getDistanceLeft() {
+  digitalWrite(TRIG_L, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG_L, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_L, LOW);
+  int duration = pulseIn(ECHO_L, HIGH);
+
+  return (duration * 0.034) / 2;
+}
+
+int getDistanceRight() {
+  digitalWrite(TRIG_R, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG_R, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_R, LOW);
+  int duration = pulseIn(ECHO_R, HIGH);
+
+  return (duration * 0.034) / 2;
+}
+
+void groundDetection() {
+  // If both edge detectors are over the edge
+  if (GROUND_R and GROUND_L) {
+    stop(300);
+    back(250);
+    //NOT safe to turn
+    if (getDistanceRight() < safeTurn) {
+      // TO-DO: FIND SOLUTION
+      left(200);
+      back(500);
+      right(500);
+      Serial.println("NOT Safe to turn Right");
+    }
+    //Safe to turn
+    else {
+      right(400);
+      Serial.println("Safe to turn Right");
+    }
+    Serial.println("No ground at all");
+  }
+
+  else if (GROUND_L) {
+    //NOT safe to turn
+    if ((getDistanceRight() < safeTurn) || FRONT_L) {
+      // TO-DO: FIND SOLUTION
+      left(200);
+      back(500);
+      right(500);
+      Serial.println("NOT Safe to turn Right");
+    }
+    //Safe to turn
+    else {
+      right(200);
+      Serial.println("Safe to turn Right");
+    }
+    Serial.println("No left ground");
+  }
+
+  else if (GROUND_R) {
+    //NOT safe to turn
+    if ((getDistanceLeft() < safeTurn) || FRONT_R) {
+      // TO-DO: FIND SOLUTION
+      right(200);
+      back(500);
+      left(500);
+      Serial.println("NOT Safe to turn Left");
+    } else {
+      left(200);
+      Serial.println("Safe to turn Left");
+    }
+    Serial.println("No right ground");
+  }
+}
+
+void objectDetection() {
+  if (FRONT_L and FRONT_R) {
+    // TO-DO: FIND SOLUTION
+    back(300);
+    right(500);
+    Serial.println("Object in the middle");
+  } else if (FRONT_R) {
+    right(200);
+    Serial.println("Object on the left");
+  }
+
+  else if (FRONT_L) {
+    left(200);
+    Serial.println("Object on the right");
+  }
+}
+
+void lineDetection() {
+  // flame is detected while avoiding objects, just default to flame detection
+  if ((fire_L < detectFlame_L) or (fire_M < detectFlame_M) or (fire_R < detectFlame_R)) {
+    fireDetection();
+  }
+  // Detecting a crossroad or perpendiclar to a line
+  else if (LT_L and LT_M and LT_R) {
+    if (prevState = 0) {
+      right(400);
+    } else {
+      forward();
+    }
+  }
+  // Line on the left
+  else if (LT_L and LT_M) {
+    if (prevState = 0) {
+      right(400);
+    } else {
+      left(0);
+    }
+  }
+  // Line on the right
+  else if (LT_R and LT_M) {
+    if (prevState = 0) {
+      left(400);
+    } else {
+      right(0);
+    }
+  }
+  // following the line
+  else if (LT_M) {
+    forward();
+  }
+  // line hard left
+  else if (LT_L) {
+    left(0);
+    Serial.println("line left");
+  }
+  // line hard right
+  else if (LT_R) {
+    right(0);
+    Serial.println("line right");
+  }
+}
+
+void fireDetection() {
+  if (fire_M < closeToFlame || fire_L < closeToFlame || fire_R < closeToFlame) {
+    stop(300);
+    Serial.println("CLOSE TO FIRE");
+    while (fire_M < detectFlame_M || fire_L < detectFlame_L || fire_R < detectFlame_R) {
+      stop(0);
+      Serial.println("Still stopped");
+    }
+    Serial.println("Fire blown out");
+    back(2000);
+    Serial.println("Backing up");
+    right(500);
+
+  } else if (fire_M < detectFlame_M) {
+    forward();
+    Serial.println("Fire in front");
+  } else if (fire_L < detectFlame_L) {
+    left(50);
+    Serial.println("Fire on the left");
+  } else if (fire_R < detectFlame_R) {
+    right(50);
+    Serial.println("Fire on the right");
+  }
+}
+
+void move() {
+  if (GROUND_L or GROUND_R) {
+    groundDetection();
+  } else if ((fire_L < detectFlame_L) or (fire_M < detectFlame_M) or (fire_R < detectFlame_R)) {
+    fireDetection();
+  } else if (FRONT_L or FRONT_R) {
+    objectDetection();
+  } else if (LT_L or LT_M or LT_R) {
+    lineDetection();
+  } else {
+    forward();
+  }
+}
+
+void setup() {
+  Serial.begin(9600);
+  // Motor stuff
+  pinMode(IN1, OUTPUT);
+  pinMode(IN2, OUTPUT);
+  pinMode(IN3, OUTPUT);
+  pinMode(IN4, OUTPUT);
+  pinMode(ENA, OUTPUT);
+  pinMode(ENB, OUTPUT);
+  digitalWrite(ENA, HIGH);
+  digitalWrite(ENB, HIGH);
+  // Sensor Stuff
+  pinMode(22, INPUT);       //IR
+  pinMode(31, INPUT);       //IR
+  pinMode(32, INPUT);       //IR
+  pinMode(33, INPUT);       //IR
+  pinMode(TRIG_L, OUTPUT);  //Ultrasonic
+  pinMode(ECHO_L, INPUT);   //Ultrasonic
+  pinMode(TRIG_R, OUTPUT);  //Ultrasonic
+  pinMode(ECHO_R, INPUT);   //Ultrasonic
+  pinMode(A12, INPUT);      //flame
+  pinMode(A13, INPUT);      //flame
+  pinMode(A14, INPUT);      //flame
+
+}
+
+
+const int numReadings = 10; // Number of readings for averaging
+int readings_R[numReadings];  // Array to store analog sensor readings
+int readings_M[numReadings];  // Array to store analog sensor readings
+int readings_L[numReadings];  // Array to store analog sensor readings
+
+unsigned long lastUpdateTime_R = 0; // Last time the readings were updated
+unsigned long lastUpdateTime_L = 0; // Last time the readings were updated
+unsigned long lastUpdateTime_M = 0; // Last time the readings were updated
+
+unsigned long lastPrintTime_R = 0;  // Last time the average was printed
+unsigned long lastPrintTime_L = 0;  // Last time the average was printed
+unsigned long lastPrintTime_M = 0;  // Last time the average was printed
+
+int readIndex_R = 0;          // Current position in the array
+int readIndex_L = 0;          // Current position in the array
+int readIndex_M = 0;          // Current position in the array
+
+
+int average(int pin, int readings[],unsigned long lastUpdateTime,unsigned long lastPrintTime,int readIndex, char sensor) {
+unsigned long currentMillis = millis();
+
+  // Update readings every 100ms
+  if (currentMillis - lastUpdateTime >= 100) {
+    lastUpdateTime = currentMillis;
+    readings[readIndex++] = pin;
+    if (readIndex >= numReadings) readIndex = 0;
+  }
+
+  // Calculate and print the average every second
+  if (currentMillis - lastPrintTime >= 1000) {
+    lastPrintTime = currentMillis;
+    int average = getAverage(readings, numReadings);
+    Serial.print("Average analog value over last second: ");
+    Serial.println(average);
+  }
+}
+
+int getAverage(int arr[], int size) {
+  long total = 0;
+  for (int i = 0; i < size; i++) {
+    total += arr[i];
+  }
+  return total / size;
+}
+
+
+
+
+
+void loop() {
+  //Serial.println(fire_L);
+  //Serial.println(fire_R);
+
+  if (update % 300 == 0) {
+    if (!LT_L and !LT_M and !LT_R) {
+      prevState = 0;
+    } else {
+      prevState = 1;
+    }
+    update = millis();
+  }
+  move();
+
+
+ // average(fire_L,readings_R,lastUpdateTime_R,lastPrintTime_R,readIndex_R, 'R');
+    average(fire_M,readings_M,lastUpdateTime_M,lastPrintTime_M,readIndex_M, 'M');
+      //average(fire_R,readings_L,lastUpdateTime_L,lastPrintTime_L,readIndex_L, 'L');
+  // Serial.print(" ");
+  // Serial.print(fire_M);
+  // Serial.print(" ");
+  // Serial.println(fire_R);
+}
